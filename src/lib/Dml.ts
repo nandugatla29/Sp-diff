@@ -172,6 +172,41 @@ export function literal(v: string | null, kind: Kind): string {
 
 export type DmlMode = 'insert' | 'insert-missing' | 'merge' | 'update';
 
+/* ---------------------------------------------------------------- value rules ---- */
+
+/** Ready-made SQL values a column can be set to instead of the pasted value. */
+export const VALUE_PRESETS: { expr: string; label: string; title: string }[] = [
+  { expr: 'GETDATE()', label: 'GETDATE()', title: 'Current date and time of the server' },
+  { expr: 'CAST(GETDATE() AS DATE)', label: 'Today (date only)', title: 'CAST(GETDATE() AS DATE)' },
+  { expr: 'GETUTCDATE()', label: 'GETUTCDATE()', title: 'Current UTC date and time' },
+  { expr: 'SYSDATETIME()', label: 'SYSDATETIME()', title: 'Current date and time, datetime2 precision' },
+  { expr: 'NEWID()', label: 'NEWID()', title: 'A new GUID for every row' },
+  { expr: 'SUSER_SNAME()', label: 'SUSER_SNAME()', title: 'Login that runs the script' },
+  { expr: 'HOST_NAME()', label: 'HOST_NAME()', title: 'Machine that runs the script' },
+  { expr: 'NULL', label: 'NULL', title: 'NULL' },
+  { expr: "''", label: "'' empty text", title: "An empty string ''" },
+  { expr: '0', label: '0', title: 'The number 0' },
+  { expr: '1', label: '1', title: 'The number 1' },
+];
+
+/**
+ * What to write for a column instead of the pasted value.
+ * - type 'expr': raw SQL, written as is (GETDATE(), @UserCode, 0, 'Admin', ISNULL(..)).
+ * - type 'text': plain text, quoted for you ('Admin' / N'..').
+ * when 'always' replaces every row, 'empty' only fills cells that are NULL or empty.
+ */
+export interface ValueRule {
+  type: 'expr' | 'text';
+  value: string;
+  when: 'always' | 'empty';
+}
+
+/** A column that is not in the pasted data, added to every row (CreatedOn = GETDATE()). */
+export interface ExtraColumn {
+  name: string;
+  rule: ValueRule;
+}
+
 export interface DmlOptions {
   table: string; // dbo.Orders
   mode: DmlMode;
@@ -187,6 +222,8 @@ export interface DmlOptions {
   brackets: 'smart' | 'keep';
   allUnicode: boolean;
   indent: string;
+  values: Record<string, ValueRule>; // per column value rule (lower-case name)
+  extraCols: ExtraColumn[];
 }
 
 export const defaultDmlOptions: DmlOptions = {
@@ -204,6 +241,8 @@ export const defaultDmlOptions: DmlOptions = {
   brackets: 'smart',
   allUnicode: false,
   indent: '    ',
+  values: {},
+  extraCols: [],
 };
 
 export function tableIdent(name: string, o: Pick<DmlOptions, 'brackets'>): string {
@@ -214,11 +253,28 @@ export function tableIdent(name: string, o: Pick<DmlOptions, 'brackets'>): strin
 }
 
 export interface ColumnPlan {
-  index: number;
+  index: number; // -1 = extra column that is not in the pasted data
   name: string;
   sql: string;
   kind: Kind;
+  rule?: ValueRule;
 }
+
+/** SQL text of a value rule for a column of the given kind. */
+export function ruleSql(rule: ValueRule, kind: Kind): string {
+  if (rule.type === 'text') return literal(rule.value, kind === 'nstring' ? 'nstring' : kind === 'string' ? 'string' : /[^\x00-\x7f]/.test(rule.value) ? 'nstring' : 'string');
+  return rule.value.trim() || 'NULL';
+}
+
+/** The SQL value of one cell: the pasted value, or the column's value rule. */
+export function cellSql(row: (string | null)[], c: ColumnPlan): string {
+  const raw = c.index >= 0 ? row[c.index] ?? null : null;
+  if (c.rule && (c.rule.when === 'always' || c.index < 0 || raw === null || raw === '')) return ruleSql(c.rule, c.kind);
+  return literal(raw, c.kind);
+}
+
+/** True when the column's value comes from a rule for every row (so it is not compared). */
+const fixedValue = (c: ColumnPlan) => !!c.rule && (c.rule.when === 'always' || c.index < 0);
 
 export function planColumns(g: Grid, o: DmlOptions, sqlTypes?: Map<string, { type: string; identity: boolean }>): ColumnPlan[] {
   const skip = new Set(o.skip.map((s) => s.toLowerCase()));
@@ -229,8 +285,15 @@ export function planColumns(g: Grid, o: DmlOptions, sqlTypes?: Map<string, { typ
     let kind: Kind = o.kinds[lower] ?? (sqlTypes?.get(lower) ? kindFromSqlType(sqlTypes.get(lower)!.type) : inferKind(g.rows.map((r) => r[index])));
     if (o.allUnicode && kind === 'string') kind = 'nstring';
     if (kind === 'string' && !o.kinds[lower] && g.rows.some((r) => r[index] && /[^\x00-\x7f]/.test(r[index]!))) kind = 'nstring';
-    out.push({ index, name: h, sql: ident(h, o), kind });
+    const rule = o.values?.[lower];
+    out.push({ index, name: h, sql: ident(h, o), kind, rule: rule && (rule.type === 'text' || rule.value.trim()) ? rule : undefined });
   });
+  for (const x of o.extraCols ?? []) {
+    const name = x.name.trim();
+    if (!name || skip.has(name.toLowerCase()) || out.some((c) => c.name.toLowerCase() === name.toLowerCase())) continue;
+    const kind: Kind = sqlTypes?.get(name.toLowerCase()) ? kindFromSqlType(sqlTypes.get(name.toLowerCase())!.type) : o.allUnicode ? 'nstring' : 'string';
+    out.push({ index: -1, name, sql: ident(name, o), kind, rule: x.rule });
+  }
   return out;
 }
 
@@ -248,7 +311,7 @@ export interface DmlResult {
 }
 
 function rowValues(row: (string | null)[], cols: ColumnPlan[]): string {
-  return `(${cols.map((c) => literal(row[c.index], c.kind)).join(', ')})`;
+  return `(${cols.map((c) => cellSql(row, c)).join(', ')})`;
 }
 
 function keyCols(cols: ColumnPlan[], keys: string[]): ColumnPlan[] {
@@ -278,6 +341,8 @@ export function buildDml(g: Grid, o: DmlOptions, sqlTypes?: Map<string, { type: 
     if (dup) warnings.push(`${dup} row(s) share a key with another row. The key columns should be unique.`);
   }
   if (o.mode === 'update' && cols.length === keys.length) warnings.push('Every column is a key column, so there is nothing to update.');
+  const fixedKeys = keys.filter(fixedValue);
+  if (fixedKeys.length && o.mode !== 'insert') warnings.push(`Key column(s) ${fixedKeys.map((c) => c.name).join(', ')} get a fixed value for every row, so rows can no longer be matched one by one.`);
 
   const per = Math.max(1, Math.min(1000, Math.floor(o.rowsPerInsert) || 1));
 
@@ -289,7 +354,7 @@ export function buildDml(g: Grid, o: DmlOptions, sqlTypes?: Map<string, { type: 
   } else if (o.mode === 'insert-missing' && keys.length) {
     for (const part of chunk(rows, per)) {
       if (part.length === 1) {
-        const where = keys.map((k) => `${k.sql} = ${literal(part[0][k.index], k.kind)}`).join(' AND ');
+        const where = keys.map((k) => `${k.sql} = ${cellSql(part[0], k)}`).join(' AND ');
         stmts.push(`IF NOT EXISTS (SELECT 1 FROM ${tbl} WHERE ${where})\n${o.indent}INSERT INTO ${tbl} (${colNames}) VALUES ${rowValues(part[0], cols)};`);
       } else {
         const on = keys.map((k) => `t.${k.sql} = v.${k.sql}`).join(' AND ');
@@ -311,7 +376,7 @@ export function buildDml(g: Grid, o: DmlOptions, sqlTypes?: Map<string, { type: 
     const nonKey = cols.filter((c) => !keys.includes(c));
     if (nonKey.length) {
       for (const r of rows) {
-        stmts.push(`UPDATE ${tbl} SET ${nonKey.map((c) => `${c.sql} = ${literal(r[c.index], c.kind)}`).join(', ')} WHERE ${keys.map((k) => `${k.sql} = ${literal(r[k.index], k.kind)}`).join(' AND ')};`);
+        stmts.push(`UPDATE ${tbl} SET ${nonKey.map((c) => `${c.sql} = ${cellSql(r, c)}`).join(', ')} WHERE ${keys.map((k) => `${k.sql} = ${cellSql(r, k)}`).join(' AND ')};`);
       }
     }
   }
@@ -349,11 +414,11 @@ export function buildDeletes(g: Grid, o: DmlOptions, sqlTypes?: Map<string, { ty
   if (keys.length === 1) {
     return (
       chunk(g.rows, 1000)
-        .map((part) => `DELETE FROM ${tbl} WHERE ${keys[0].sql} IN (${part.map((r) => literal(r[keys[0].index], keys[0].kind)).join(', ')});`)
+        .map((part) => `DELETE FROM ${tbl} WHERE ${keys[0].sql} IN (${part.map((r) => cellSql(r, keys[0])).join(', ')});`)
         .join('\n') + '\n'
     );
   }
-  return g.rows.map((r) => `DELETE FROM ${tbl} WHERE ${keys.map((k) => `${k.sql} = ${literal(r[k.index], k.kind)}`).join(' AND ')};`).join('\n') + '\n';
+  return g.rows.map((r) => `DELETE FROM ${tbl} WHERE ${keys.map((k) => `${k.sql} = ${cellSql(r, k)}`).join(' AND ')};`).join('\n') + '\n';
 }
 
 /* ---------------------------------------------------------------- comparing ------ */
@@ -384,7 +449,7 @@ export function dataDelta(src: Grid, tgt: Grid, o: DmlOptions, sqlTypes?: Map<st
 
   const tIndex = new Map<string, number>();
   tgt.headers.forEach((h, i) => tIndex.set(h.toLowerCase(), i));
-  const missingCols = cols.filter((c) => !tIndex.has(c.name.toLowerCase()));
+  const missingCols = cols.filter((c) => c.index >= 0 && !fixedValue(c) && !tIndex.has(c.name.toLowerCase()));
   if (missingCols.length) warnings.push(`Column(s) ${missingCols.map((c) => c.name).join(', ')} are not in the target data. They are compared as NULL.`);
 
   const tKey = (r: (string | null)[]) => keys.map((k) => r[tIndex.get(k.name.toLowerCase()) ?? -1] ?? '').join('\u0001');
@@ -405,9 +470,15 @@ export function dataDelta(src: Grid, tgt: Grid, o: DmlOptions, sqlTypes?: Map<st
       added.push(r);
       continue;
     }
-    const diff = cols.filter((c) => !keys.includes(c)).filter((c) => !same(r[c.index], t[tIndex.get(c.name.toLowerCase()) ?? -1] ?? null));
+    // Columns set by an "always" rule (UpdatedOn = GETDATE()) are not compared, but they are
+    // written on every row that really changed.
+    const nonKey = cols.filter((c) => !keys.includes(c));
+    const diff = nonKey.filter((c) => !fixedValue(c)).filter((c) => !same(r[c.index], t[tIndex.get(c.name.toLowerCase()) ?? -1] ?? null));
     if (!diff.length) same_++;
-    else updates.push(`UPDATE ${tbl} SET ${diff.map((c) => `${c.sql} = ${literal(r[c.index], c.kind)}`).join(', ')} WHERE ${keys.map((c) => `${c.sql} = ${literal(r[c.index], c.kind)}`).join(' AND ')};`);
+    else {
+      const set = [...diff, ...nonKey.filter(fixedValue)];
+      updates.push(`UPDATE ${tbl} SET ${set.map((c) => `${c.sql} = ${cellSql(r, c)}`).join(', ')} WHERE ${keys.map((c) => `${c.sql} = ${cellSql(r, c)}`).join(' AND ')};`);
+    }
   }
   let targetOnly = 0;
   tMap.forEach((_, k) => {

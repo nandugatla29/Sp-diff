@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import '../deploy.css';
 import { cleanTables, columnTypes, defaultDdlOptions, firstTable, tableDelta } from '../lib/Ddl';
 import type { DdlOptions } from '../lib/Ddl';
-import { KIND_LABEL, buildDeletes, buildDml, dataDelta, defaultDmlOptions, defaultGridOptions, parseGrid } from '../lib/Dml';
-import type { DmlMode, DmlOptions, Grid, GridOptions, Kind } from '../lib/Dml';
+import { KIND_LABEL, VALUE_PRESETS, buildDeletes, buildDml, dataDelta, defaultDmlOptions, defaultGridOptions, parseGrid } from '../lib/Dml';
+import type { DmlMode, DmlOptions, ExtraColumn, Grid, GridOptions, Kind, ValueRule } from '../lib/Dml';
+import CodeArea from './FindReplace';
+import Panes from './Panes';
 import { KIND_NAME, KIND_ORDER, buildRelease, lintScript, prepareScript } from '../lib/Release';
 import type { ItemKind, PrepOptions, ReleaseItem } from '../lib/Release';
 import { downloadText } from '../lib/Folder';
@@ -42,16 +44,20 @@ interface OutProps {
   notes?: string[];
   err?: string;
   defaultName?: string;
-  onAdd?: (name: string) => void;
+  onAdd?: (name: string, sql: string) => void;
 }
 
 function Out({ title, text, file, notes = [], err, defaultName = '', onAdd }: OutProps) {
   const [name, setName] = useState('');
   const [copied, setCopied] = useState(false);
-  const lines = text ? text.split('\n').length - 1 : 0;
+  // The script can be edited by hand (or with Find / Replace). A new generated script resets it.
+  const [edited, setEdited] = useState<string | null>(null);
+  useEffect(() => setEdited(null), [text]);
+  const cur = edited ?? text;
+  const lines = cur ? cur.split('\n').length - 1 : 0;
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(cur);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -63,17 +69,25 @@ function Out({ title, text, file, notes = [], err, defaultName = '', onAdd }: Ou
       <div className="dk-bar">
         <h3>{title}</h3>
         <span className="muted small">{lines} line(s)</span>
+        {edited !== null && (
+          <span className="dk-edited" title="You changed the generated script. Changing an option or the pasted data generates it again and drops these edits.">
+            edited by hand
+            <button type="button" className="link" onClick={() => setEdited(null)}>
+              undo all
+            </button>
+          </span>
+        )}
         <span className="spacer" />
-        <button type="button" disabled={!text} onClick={copy}>
+        <button type="button" disabled={!cur} onClick={copy}>
           {copied ? 'Copied' : 'Copy'}
         </button>
-        <button type="button" disabled={!text} onClick={() => downloadText(file, text)}>
+        <button type="button" disabled={!cur} onClick={() => downloadText(file, cur)}>
           Download .sql
         </button>
         {onAdd && (
           <>
             <input type="text" className="dk-name" placeholder={defaultName || 'Name in release'} value={name} onChange={(e) => setName(e.target.value)} />
-            <button type="button" className="primary" disabled={!text} onClick={() => onAdd(name.trim() || defaultName || title)}>
+            <button type="button" className="primary" disabled={!cur} onClick={() => onAdd(name.trim() || defaultName || title, cur)}>
               Add to release
             </button>
           </>
@@ -84,7 +98,7 @@ function Out({ title, text, file, notes = [], err, defaultName = '', onAdd }: Ou
           {err}
         </div>
       )}
-      <textarea readOnly spellCheck={false} value={text} placeholder="The script appears here" onFocus={(e) => e.currentTarget.select()} />
+      <CodeArea className="dk-script" value={cur} onChange={(v) => setEdited(v === text ? null : v)} placeholder="The script appears here. You can edit it; Ctrl+F finds, Ctrl+H replaces." ariaLabel={title} />
       {notes.length > 0 && (
         <ul className="dk-notes">
           {notes.map((n, i) => (
@@ -98,10 +112,10 @@ function Out({ title, text, file, notes = [], err, defaultName = '', onAdd }: Ou
 
 function Paste({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder: string }) {
   return (
-    <label className="dk-paste">
+    <div className="dk-paste">
       <span className="dk-cap">{label}</span>
-      <textarea spellCheck={false} wrap="off" value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
-    </label>
+      <CodeArea value={value} onChange={onChange} placeholder={placeholder} ariaLabel={label} />
+    </div>
   );
 }
 
@@ -167,6 +181,33 @@ export default function DeployKit({ onBack }: { onBack: () => void }) {
     [grid, compare, mopt, sqlTypes],
   );
 
+  const [inTab, setInTab] = usePersistentState<'rows' | 'schema' | 'prod'>('dk-data-in', 'rows');
+  const [outTab, setOutTab] = useState<'script' | 'rollback'>('script');
+  const [colFilter, setColFilter] = useState('');
+
+  /** Columns of the pasted data plus the columns added by hand, as shown in the Columns panel. */
+  const columnRows = useMemo(() => {
+    const out: { name: string; extra: boolean; extraIndex: number; rule?: ValueRule; sample?: string | null }[] = grid.v.headers.map((h, i) => ({
+      name: h,
+      extra: false,
+      extraIndex: -1,
+      rule: mopt.values[h.toLowerCase()],
+      sample: grid.v.rows.length ? grid.v.rows[0][i] ?? null : undefined,
+    }));
+    mopt.extraCols.forEach((x, i) => out.push({ name: x.name, extra: true, extraIndex: i, rule: x.rule }));
+    return out;
+  }, [grid, mopt.values, mopt.extraCols]);
+
+  const setValueRule = (h: string, r: ValueRule | undefined) => {
+    const next = { ...mopt.values };
+    if (r) next[h.toLowerCase()] = r;
+    else delete next[h.toLowerCase()];
+    setM('values', next);
+  };
+  const addExtra = () => setM('extraCols', [...mopt.extraCols, { name: '', rule: { type: 'expr', value: 'GETDATE()', when: 'always' } }]);
+  const setExtra = (i: number, patch: Partial<ExtraColumn>) => setM('extraCols', mopt.extraCols.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+  const removeExtra = (i: number) => setM('extraCols', mopt.extraCols.filter((_, k) => k !== i));
+
   const toggleList = (k: 'keys' | 'skip', h: string, on: boolean) => {
     const cur = mopt[k].filter((x) => x.toLowerCase() !== h.toLowerCase());
     setM(k, on ? [...cur, h] : cur);
@@ -220,128 +261,296 @@ export default function DeployKit({ onBack }: { onBack: () => void }) {
 
       <div className="dk-body">
         {tab === 'tables' && (
-          <div className="dk-cols">
-            <div className="dk-side">
-              <Paste label="Paste the SSMS “Generate Scripts” output (one or many tables)" value={ddlIn} onChange={setDdlIn} placeholder="USE [..] GO SET ANSI_NULLS ON ... CREATE TABLE ..." />
-              <DdlOptionsBox o={dopt} set={setD} />
+          <Panes
+            id="dk-tables"
+            panes={[
+              {
+                id: 'in',
+                title: 'Input',
+                size: 2,
+                minPx: 300,
+                body: (
+                  <div className="dk-side">
+                    <Paste label="Paste the SSMS “Generate Scripts” output (one or many tables)" value={ddlIn} onChange={setDdlIn} placeholder="USE [..] GO SET ANSI_NULLS ON ... CREATE TABLE ..." />
+                    <DdlOptionsBox o={dopt} set={setD} />
+                  </div>
+                ),
+              },
+              {
+                id: 'out',
+                title: 'Output',
+                size: 3,
+                fill: true,
+                body: (
+                  <Out
+                    title="Clean CREATE TABLE"
+                    text={tables.v.sql}
+                    err={tables.err}
+                    notes={tables.v.notes}
+                    file="tables.sql"
+                    defaultName={tables.v.tables === 1 ? 'Table' : `${tables.v.tables} tables`}
+                    onAdd={(n, sql) => add('table', n, sql)}
+                  />
+                ),
+              },
+            ]}
+          />
+        )}
+
+        {tab === 'alter' && (
+          <Panes
+            id="dk-alter"
+            panes={[
+              {
+                id: 'in',
+                title: 'Input',
+                size: 2,
+                minPx: 300,
+                body: (
+                  <div className="dk-side">
+                    <Paste label="Table script from UAT (the new version)" value={uatIn} onChange={setUatIn} placeholder="CREATE TABLE ... from UAT" />
+                    <Paste label="Table script from Production (the current version)" value={prodIn} onChange={setProdIn} placeholder="CREATE TABLE ... from production. Tables missing here are created in full." />
+                    <DdlOptionsBox o={dopt} set={setD} />
+                  </div>
+                ),
+              },
+              {
+                id: 'out',
+                title: 'Output',
+                size: 3,
+                fill: true,
+                body: <Out title="ALTER script (Production → UAT)" text={alter.v.sql} err={alter.err} notes={alter.v.notes} file="table-changes.sql" defaultName="Table changes" onAdd={(n, sql) => add('alter', n, sql)} />,
+              },
+            ]}
+          />
+        )}
+
+        {tab === 'data' && (
+          <div className="dk-data">
+            <div className="dk-toolbar">
+              <label>
+                Table <input type="text" className="dk-table" value={mopt.table} onChange={(e) => setM('table', e.target.value)} />
+              </label>
+              <label>
+                Script{' '}
+                <select value={mopt.mode} onChange={(e) => setM('mode', e.target.value as DmlMode)}>
+                  {MODES.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label title="Rows in one INSERT / MERGE statement (1 - 1000)">
+                Rows / statement <input type="number" min={1} max={1000} value={mopt.rowsPerInsert} onChange={(e) => setM('rowsPerInsert', Math.min(1000, Math.max(1, Number(e.target.value) || 1)))} />
+              </label>
+              <label title="Write GO after every N statements (0 = never)">
+                GO every <input type="number" min={0} value={mopt.goEvery} onChange={(e) => setM('goEvery', Math.max(0, Number(e.target.value) || 0))} />
+              </label>
+              <Chk label="IDENTITY_INSERT" checked={mopt.identityInsert} onChange={(v) => setM('identityInsert', v)} title="SET IDENTITY_INSERT ON: needed when the key is an IDENTITY column and you keep the same ids as UAT" />
+              <Chk label="Transaction" checked={mopt.transaction} onChange={(v) => setM('transaction', v)} title="Wrap in SET XACT_ABORT ON + BEGIN / COMMIT TRANSACTION" />
+              <details className="dk-more">
+                <summary>More options</summary>
+                <div className="dk-more-box">
+                  <Chk label="PRINT a summary" checked={mopt.printSummary} onChange={(v) => setM('printSummary', v)} />
+                  <Chk label="Header comment" checked={mopt.header} onChange={(v) => setM('header', v)} />
+                  <Chk label="Use N'' for every text column" checked={mopt.allUnicode} onChange={(v) => setM('allUnicode', v)} />
+                  <hr />
+                  <span className="dk-cap">Pasted data</span>
+                  <label className="dk-row">
+                    Text that means NULL <input type="text" value={gopt.nullText} onChange={(e) => setGridRaw({ ...gopt, nullText: e.target.value })} />
+                  </label>
+                  <Chk label="Empty cell = NULL" checked={gopt.emptyAsNull} onChange={(v) => setGridRaw({ ...gopt, emptyAsNull: v })} />
+                  <Chk label="Trim spaces" checked={gopt.trim} onChange={(v) => setGridRaw({ ...gopt, trim: v })} />
+                </div>
+              </details>
+              <span className="spacer" />
+              {data.v.stat && <span className="dk-stat">{data.v.stat}</span>}
             </div>
-            <Out
-              title="Clean CREATE TABLE"
-              text={tables.v.sql}
-              err={tables.err}
-              notes={tables.v.notes}
-              file="tables.sql"
-              defaultName={tables.v.tables === 1 ? 'Table' : `${tables.v.tables} tables`}
-              onAdd={(n) => add('table', n, tables.v.sql)}
+
+            <Panes
+              id="dk-data"
+              className="dk-data-panes"
+              panes={[
+                {
+                  id: 'input',
+                  title: 'Input',
+                  size: 3,
+                  minPx: 260,
+                  fill: true,
+                  actions: (
+                    <div className="dk-tabs" role="tablist">
+                      {(
+                        [
+                          ['rows', 'UAT rows', grid.v.rows.length ? String(grid.v.rows.length) : ''],
+                          ['schema', 'Table script', hint.trim() ? '✓' : ''],
+                          ['prod', 'Production', prodRows.trim() ? String(prodGrid.rows.length) : ''],
+                        ] as const
+                      ).map(([id, label, badge]) => (
+                        <button key={id} type="button" role="tab" aria-selected={inTab === id} className={inTab === id ? 'on' : ''} onClick={() => setInTab(id)}>
+                          {label}
+                          {badge && <span className="count">{badge}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  ),
+                  body: (
+                    <div className="dk-input">
+                      {inTab === 'rows' && (
+                        <>
+                          <p className="dk-cap">Select the rows in SSMS, right-click → Copy with Headers, paste here.</p>
+                          <CodeArea value={gridIn} onChange={setGridIn} placeholder={'Id\tName\tIsActive\n1\tAlpha\t1'} ariaLabel="UAT rows" />
+                        </>
+                      )}
+                      {inTab === 'schema' && (
+                        <>
+                          <p className="dk-cap">Optional. The CREATE TABLE script fills in the table name, the key and the exact column types.</p>
+                          <CodeArea value={hint} onChange={setHint} placeholder="CREATE TABLE [dbo].[...] (...)" ariaLabel="Table script" />
+                        </>
+                      )}
+                      {inTab === 'prod' && (
+                        <>
+                          <p className="dk-cap">Optional. The same rows copied from Production: then only new and changed rows are scripted.</p>
+                          <CodeArea value={prodRows} onChange={setProdRows} placeholder="Leave empty to script every row" ariaLabel="Production rows" />
+                        </>
+                      )}
+                    </div>
+                  ),
+                },
+                {
+                  id: 'columns',
+                  title: (
+                    <>
+                      Columns <span className="muted small">{columnRows.length ? `${columnRows.length}` : ''}</span>
+                    </>
+                  ),
+                  size: 5,
+                  minPx: 420,
+                  actions: (
+                    <>
+                      <input type="search" className="dk-filter" placeholder="Filter columns" value={colFilter} onChange={(e) => setColFilter(e.target.value)} aria-label="Filter columns" />
+                      <button type="button" onClick={addExtra} title="Add a column that is not in the pasted data, e.g. CreatedOn = GETDATE()">
+                        + Column
+                      </button>
+                    </>
+                  ),
+                  body: columnRows.length ? (
+                    <table className="dk-cols-table">
+                      <thead>
+                        <tr>
+                          <th>Column</th>
+                          <th title="Used to match rows (MERGE / UPDATE / compare / rollback)">Key</th>
+                          <th title="Leave this column out of the script">Skip</th>
+                          <th>Type</th>
+                          <th title="Write the pasted value, or a fixed value such as GETDATE()">Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {columnRows
+                          .filter((c) => !colFilter.trim() || c.name.toLowerCase().includes(colFilter.trim().toLowerCase()))
+                          .map((c) => {
+                            const lower = c.name.toLowerCase();
+                            const isKey = mopt.keys.some((k) => k.toLowerCase() === lower);
+                            const skipped = mopt.skip.some((k) => k.toLowerCase() === lower);
+                            return (
+                              <tr key={c.extra ? `x${c.extraIndex}` : lower} className={`${skipped ? 'skipped' : ''}${c.extra ? ' extra' : ''}${c.rule ? ' has-rule' : ''}`}>
+                                <td className="dk-colname">
+                                  {c.extra ? (
+                                    <>
+                                      <input type="text" value={c.name} placeholder="ColumnName" aria-label="New column name" onChange={(e) => setExtra(c.extraIndex, { name: e.target.value })} />
+                                      <button type="button" className="icon" title="Remove this column" onClick={() => removeExtra(c.extraIndex)}>
+                                        ✕
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>{c.name}</span>
+                                      {c.sample !== undefined && (
+                                        <span className="dk-sample" title={`First value: ${c.sample ?? 'NULL'}`}>
+                                          {c.sample === null ? 'NULL' : c.sample === '' ? "''" : c.sample}
+                                        </span>
+                                      )}
+                                    </>
+                                  )}
+                                </td>
+                                <td>
+                                  <input type="checkbox" checked={isKey} onChange={(e) => toggleList('keys', c.name, e.target.checked)} aria-label={`${c.name} is a key`} />
+                                </td>
+                                <td>
+                                  <input type="checkbox" checked={skipped} onChange={(e) => toggleList('skip', c.name, e.target.checked)} aria-label={`skip ${c.name}`} />
+                                </td>
+                                <td>
+                                  <select value={mopt.kinds[lower] ?? ''} onChange={(e) => setKind(c.name, e.target.value)} aria-label={`${c.name} value type`}>
+                                    <option value="">auto</option>
+                                    {(Object.keys(KIND_LABEL) as Kind[]).map((k) => (
+                                      <option key={k} value={k}>
+                                        {KIND_LABEL[k]}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+                                <td>
+                                  <ValueEditor
+                                    rule={c.rule}
+                                    extra={c.extra}
+                                    onChange={(r) => (c.extra ? r && setExtra(c.extraIndex, { rule: r }) : setValueRule(c.name, r))}
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="dk-empty">Paste rows in Input and the columns show up here. For each column you can mark the key, skip it, or give it a fixed value like GETDATE().</p>
+                  ),
+                },
+                {
+                  id: 'output',
+                  title: 'Output',
+                  size: 4.5,
+                  minPx: 320,
+                  fill: true,
+                  actions: rollback ? (
+                    <div className="dk-tabs" role="tablist">
+                      <button type="button" role="tab" aria-selected={outTab === 'script'} className={outTab === 'script' ? 'on' : ''} onClick={() => setOutTab('script')}>
+                        Script
+                      </button>
+                      <button type="button" role="tab" aria-selected={outTab === 'rollback'} className={outTab === 'rollback' ? 'on' : ''} onClick={() => setOutTab('rollback')}>
+                        Rollback
+                      </button>
+                    </div>
+                  ) : undefined,
+                  body:
+                    rollback && outTab === 'rollback' ? (
+                      <Out title="Rollback (deletes exactly these rows; only safe if they are new in production)" text={rollback} file={`${mopt.table.replace(/[^\w.-]/g, '_')}-rollback.sql`} />
+                    ) : (
+                      <Out
+                        title={compare ? 'Delta script (new + changed rows)' : 'Data script'}
+                        text={data.v.sql}
+                        err={data.err || grid.err}
+                        notes={[...grid.v.warnings, ...data.v.notes]}
+                        file={`${mopt.table.replace(/[^\w.-]/g, '_')}-data.sql`}
+                        defaultName={mopt.table}
+                        onAdd={(n, sql) => add('data', n, sql)}
+                      />
+                    ),
+                },
+              ]}
             />
           </div>
         )}
 
-        {tab === 'alter' && (
-          <div className="dk-cols">
-            <div className="dk-side">
-              <Paste label="Table script from UAT (the new version)" value={uatIn} onChange={setUatIn} placeholder="CREATE TABLE ... from UAT" />
-              <Paste label="Table script from Production (the current version)" value={prodIn} onChange={setProdIn} placeholder="CREATE TABLE ... from production. Tables missing here are created in full." />
-              <DdlOptionsBox o={dopt} set={setD} />
-            </div>
-            <Out title="ALTER script (Production → UAT)" text={alter.v.sql} err={alter.err} notes={alter.v.notes} file="table-changes.sql" defaultName="Table changes" onAdd={(n) => add('alter', n, alter.v.sql)} />
-          </div>
-        )}
-
-        {tab === 'data' && (
-          <div className="dk-cols">
-            <div className="dk-side">
-              <Paste label="Rows from UAT: select the table in SSMS, Copy with Headers, paste here" value={gridIn} onChange={setGridIn} placeholder={'Id\tName\tIsActive\n1\tAlpha\t1'} />
-              <Paste label="Optional: CREATE TABLE script (picks the table name, key and exact column types)" value={hint} onChange={setHint} placeholder="Paste the table script so values are quoted by their real types" />
-              <Paste label="Optional: the same rows from Production (only new and changed rows are scripted)" value={prodRows} onChange={setProdRows} placeholder="Leave empty to script every row" />
-              <fieldset className="dk-opts">
-                <legend>Script</legend>
-                <label className="dk-row">
-                  Table <input type="text" value={mopt.table} onChange={(e) => setM('table', e.target.value)} />
-                </label>
-                <label className="dk-row">
-                  Type{' '}
-                  <select value={mopt.mode} onChange={(e) => setM('mode', e.target.value as DmlMode)}>
-                    {MODES.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="dk-row">
-                  Rows per INSERT <input type="number" min={1} max={1000} value={mopt.rowsPerInsert} onChange={(e) => setM('rowsPerInsert', Math.min(1000, Math.max(1, Number(e.target.value) || 1)))} />
-                </label>
-                <label className="dk-row">
-                  GO after every N statements (0 = never) <input type="number" min={0} value={mopt.goEvery} onChange={(e) => setM('goEvery', Math.max(0, Number(e.target.value) || 0))} />
-                </label>
-                <Chk label="SET IDENTITY_INSERT ON" checked={mopt.identityInsert} onChange={(v) => setM('identityInsert', v)} title="Needed when the key column is an IDENTITY column and you keep the same ids as UAT" />
-                <Chk label="Wrap in a transaction" checked={mopt.transaction} onChange={(v) => setM('transaction', v)} />
-                <Chk label="PRINT a summary" checked={mopt.printSummary} onChange={(v) => setM('printSummary', v)} />
-                <Chk label="Header comment" checked={mopt.header} onChange={(v) => setM('header', v)} />
-                <Chk label="Use N'' for every text column" checked={mopt.allUnicode} onChange={(v) => setM('allUnicode', v)} />
-              </fieldset>
-              <fieldset className="dk-opts">
-                <legend>Pasted data</legend>
-                <label className="dk-row">
-                  Text that means NULL <input type="text" value={gopt.nullText} onChange={(e) => setGridRaw({ ...gopt, nullText: e.target.value })} />
-                </label>
-                <Chk label="Empty cell = NULL" checked={gopt.emptyAsNull} onChange={(v) => setGridRaw({ ...gopt, emptyAsNull: v })} />
-                <Chk label="Trim spaces" checked={gopt.trim} onChange={(v) => setGridRaw({ ...gopt, trim: v })} />
-              </fieldset>
-              {grid.v.headers.length > 0 && (
-                <table className="dk-cols-table">
-                  <thead>
-                    <tr>
-                      <th>Column</th>
-                      <th title="Used to match rows (MERGE / UPDATE / compare / rollback)">Key</th>
-                      <th>Skip</th>
-                      <th>Value type</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {grid.v.headers.map((h) => (
-                      <tr key={h}>
-                        <td>{h}</td>
-                        <td>
-                          <input type="checkbox" checked={mopt.keys.some((k) => k.toLowerCase() === h.toLowerCase())} onChange={(e) => toggleList('keys', h, e.target.checked)} aria-label={`${h} is a key`} />
-                        </td>
-                        <td>
-                          <input type="checkbox" checked={mopt.skip.some((k) => k.toLowerCase() === h.toLowerCase())} onChange={(e) => toggleList('skip', h, e.target.checked)} aria-label={`skip ${h}`} />
-                        </td>
-                        <td>
-                          <select value={mopt.kinds[h.toLowerCase()] ?? ''} onChange={(e) => setKind(h, e.target.value)}>
-                            <option value="">auto</option>
-                            {(Object.keys(KIND_LABEL) as Kind[]).map((k) => (
-                              <option key={k} value={k}>
-                                {KIND_LABEL[k]}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            <div className="dk-stack">
-              <Out
-                title={compare ? 'Delta script (new + changed rows)' : 'Data script'}
-                text={data.v.sql}
-                err={data.err || grid.err}
-                notes={[...(data.v.stat ? [data.v.stat] : []), ...grid.v.warnings, ...data.v.notes]}
-                file={`${mopt.table.replace(/[^\w.-]/g, '_')}-data.sql`}
-                defaultName={mopt.table}
-                onAdd={(n) => add('data', n, data.v.sql)}
-              />
-              {rollback && <Out title="Rollback (deletes exactly these rows, only safe if they are new in production)" text={rollback} file={`${mopt.table.replace(/[^\w.-]/g, '_')}-rollback.sql`} />}
-            </div>
-          </div>
-        )}
-
         {tab === 'release' && (
-          <div className="dk-cols">
+          <Panes
+            id="dk-release"
+            panes={[
+              {
+                id: 'items',
+                title: 'Items',
+                size: 2,
+                minPx: 300,
+                body: (
             <div className="dk-side">
               <fieldset className="dk-opts">
                 <legend>Add a procedure, view, function or any script</legend>
@@ -416,6 +625,14 @@ export default function DeployKit({ onBack }: { onBack: () => void }) {
                 </div>
               )}
             </div>
+                ),
+              },
+              {
+                id: 'out',
+                title: 'Release script',
+                size: 3,
+                fill: true,
+                body: (
             <div className="dk-stack">
               {findings.length > 0 && (
                 <ul className="dk-find" role="status">
@@ -428,7 +645,10 @@ export default function DeployKit({ onBack }: { onBack: () => void }) {
               )}
               <Out title="Release script" text={items.length ? release : ''} file={`${(rel.title || 'release').replace(/[^\w.-]+/g, '_')}.sql`} notes={items.length ? [] : ['Add tables, data and procedures from the other tabs. Each “Add to release” button puts the script into this list.']} />
             </div>
-          </div>
+                ),
+              },
+            ]}
+          />
         )}
       </div>
     </div>
@@ -462,5 +682,59 @@ function DdlOptionsBox({ o, set }: { o: DdlOptions; set: <K extends keyof DdlOpt
         </select>
       </label>
     </fieldset>
+  );
+}
+
+const TEXT = '__text';
+const SQL = '__sql';
+
+/** "Value" cell of a column: the pasted value, a ready-made SQL value, fixed text or any SQL expression. */
+function ValueEditor({ rule, extra, onChange }: { rule?: ValueRule; extra: boolean; onChange: (r: ValueRule | undefined) => void }) {
+  const preset = rule?.type === 'expr' && VALUE_PRESETS.some((p) => p.expr === rule.value) ? rule.value : null;
+  const sel = !rule ? '' : rule.type === 'text' ? TEXT : preset ?? SQL;
+  const when = rule?.when ?? 'always';
+  return (
+    <div className="dk-value">
+      <select
+        value={sel}
+        aria-label="Value"
+        onChange={(e) => {
+          const v = e.target.value;
+          if (!v) onChange(undefined);
+          else if (v === TEXT) onChange({ type: 'text', value: rule?.type === 'text' ? rule.value : '', when });
+          else if (v === SQL) onChange({ type: 'expr', value: preset ? '' : rule?.value ?? '', when });
+          else onChange({ type: 'expr', value: v, when });
+        }}
+      >
+        {!extra && <option value="">from pasted data</option>}
+        <optgroup label="SQL value">
+          {VALUE_PRESETS.map((p) => (
+            <option key={p.expr} value={p.expr} title={p.title}>
+              {p.label}
+            </option>
+          ))}
+        </optgroup>
+        <optgroup label="Your own">
+          <option value={TEXT}>Fixed text…</option>
+          <option value={SQL}>SQL expression…</option>
+        </optgroup>
+      </select>
+      {rule && !extra && (
+        <select value={when} aria-label="When" title="Replace every row, or only the rows where the pasted cell is NULL or empty" onChange={(e) => onChange({ ...rule, when: e.target.value as ValueRule['when'] })}>
+          <option value="always">all rows</option>
+          <option value="empty">only if empty</option>
+        </select>
+      )}
+      {rule && (sel === TEXT || sel === SQL) && (
+        <input
+          type="text"
+          value={rule.value}
+          autoFocus={!rule.value}
+          placeholder={sel === TEXT ? 'Admin (quoted for you)' : "DATEADD(DAY, 1, GETDATE()) or 'Admin'"}
+          aria-label={sel === TEXT ? 'Fixed text' : 'SQL expression'}
+          onChange={(e) => onChange({ ...rule, value: e.target.value })}
+        />
+      )}
+    </div>
   );
 }

@@ -904,6 +904,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import DeployKit from './components/DeployKit';
+import RepoHub from './components/RepoHub';
 import AssistPanel from './components/AssistPanel';
 import DiffView from './components/DiffView';
 import SqlHighlight from './components/Sqlhighlight';
@@ -1534,12 +1535,34 @@ export default function App() {
   );
 
   const [deployOpen, setDeployOpen] = useState(false);
+  const [repoOpen, setRepoOpen] = usePersistentState<boolean>('repoOpen', false);
   if (deployOpen) return <DeployKit onBack={() => setDeployOpen(false)} />;
+  if (repoOpen)
+    return (
+      <RepoHub
+        onBack={() => setRepoOpen(false)}
+        onOpenInCompare={(l, r, ln, rn) => {
+          // Two versions from SP Repo go straight into the normal compare screen.
+          setOpenPath(null);
+          setLeft(l);
+          setRight(r);
+          setLeftName(ln);
+          setRightName(rn);
+          setBaseline({ left: l, right: r });
+          setHistory([]);
+          setReviewedMap({});
+          setDirty(false);
+          setView({ kind: 'compare' });
+          setTab('diff');
+          setRepoOpen(false);
+        }}
+      />
+    );
 
   return (
     <div className="app">
       <header className="topbar">
-        <h1>DB Script Deploy Assist</h1>
+        <h1>SP Diff</h1>
         <nav aria-label="Views">
           <button type="button" className={tab === 'folders' ? 'on' : ''} onClick={() => setTab('folders')}>
             Folders
@@ -1563,6 +1586,9 @@ export default function App() {
           </button>
         )}
         <div className="spacer" />
+        <button type="button" onClick={() => setRepoOpen(true)} title="Version control for procedures: commits, branches, pull requests, shared folder">
+          SP Repo
+        </button>
         <button type="button" onClick={() => setDeployOpen(true)} title="Clean table scripts, data scripts and release pack">
           Deploy Kit
         </button>
