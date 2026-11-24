@@ -1562,7 +1562,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>SP Diff</h1>
+        <h1>DB Script Deploy Assist</h1>
         <nav aria-label="Views">
           <button type="button" className={tab === 'folders' ? 'on' : ''} onClick={() => setTab('folders')}>
             Folders
