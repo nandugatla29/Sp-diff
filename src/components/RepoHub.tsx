@@ -641,6 +641,27 @@ function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, r
   };
   useEffect(() => flush, [sel, flush]);
 
+  /** Save typing that is still waiting (before a commit, so the last keys are included). */
+  const saveNow = async () => {
+    window.clearTimeout(saveTimer.current);
+    const p = pending.current;
+    pending.current = null;
+    if (p) await repo.saveWork(p.name, p.text);
+  };
+
+  /** Forget the editor's unsaved copy (and any save still waiting) so it shows the stored file. */
+  const dropDraft = () => {
+    window.clearTimeout(saveTimer.current);
+    pending.current = null;
+    setDraft(null);
+  };
+  // The file changed outside the editor (discard, pull, switch branch, merge, restore):
+  // show the new text unless you are in the middle of typing.
+  const stored = sel ? view.work[sel] : undefined;
+  useEffect(() => {
+    if (!pending.current) setDraft(null);
+  }, [stored]);
+
   const changed = view.status;
   const chosen = picked ?? new Set(changed.map((c) => c.name));
   useEffect(() => setPicked(null), [view.status.length, view.head?.id]);
@@ -724,7 +745,10 @@ function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, r
       <p>
         <strong>{sel}</strong> is deleted in your working copy. Commit to delete it from the branch.
       </p>
-      <button type="button" onClick={() => act('Restoring', async () => repo.discard([sel]))}>
+      <button type="button" onClick={() => {
+          dropDraft();
+          act('Restoring', async () => repo.discard([sel]));
+        }}>
         Undo delete
       </button>
     </div>
@@ -752,12 +776,20 @@ function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, r
       <button type="button" title="Download this procedure" onClick={() => downloadText(`${sel}.sql`, text ?? '')}>
         ⤓
       </button>
-      {stateOf.get(sel) && (
-        <button type="button" title="Throw away your changes to this file" onClick={() => confirm(`Discard your changes to ${sel}?`) && act('Discarding', async () => repo.discard([sel]))}>
+      {(stateOf.get(sel) || (draft !== null && draft !== view.work[sel])) && (
+        <button type="button" title="Throw away your changes to this file" onClick={() => {
+            if (!confirm(`Discard your changes to ${sel}?`)) return;
+            dropDraft();
+            act('Discarding', async () => (await repo.discard([sel]), `Changes to ${sel} discarded.`));
+          }}>
           Discard
         </button>
       )}
-      <button type="button" title="Delete this procedure (commit to make it final)" onClick={() => confirm(`Delete ${sel} from your working copy?`) && act('Deleting', async () => repo.deleteWork(sel))}>
+      <button type="button" title="Delete this procedure (commit to make it final)" onClick={() => {
+          if (!confirm(`Delete ${sel} from your working copy?`)) return;
+          dropDraft();
+          act('Deleting', async () => repo.deleteWork(sel));
+        }}>
         🗑
       </button>
     </>
@@ -845,6 +877,7 @@ function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, r
               disabled={busy || !msg.trim() || chosen.size === 0}
               onClick={() =>
                 act('Committing', async () => {
+                  await saveNow();
                   const c = await repo.commitChanges(msg, [...chosen]);
                   setMsg('');
                   return `Committed ${shortId(c.id)} to ${view.branch}.`;
@@ -859,6 +892,7 @@ function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, r
                 disabled={busy || !msg.trim() || chosen.size === 0}
                 onClick={() =>
                   act('Committing and pushing', async () => {
+                    await saveNow();
                     const c = await repo.commitChanges(msg, [...chosen]);
                     setMsg('');
                     const p = await repo.push();
@@ -869,7 +903,11 @@ function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, r
                 Commit &amp; Push
               </button>
             )}
-            <button type="button" className="link" onClick={() => confirm('Discard ALL uncommitted changes?') && act('Discarding', async () => repo.discard())}>
+            <button type="button" className="link" onClick={() => {
+                if (!confirm('Discard ALL uncommitted changes?')) return;
+                dropDraft();
+                act('Discarding', async () => (await repo.discard(), 'All uncommitted changes discarded.'));
+              }}>
               Discard all
             </button>
           </div>

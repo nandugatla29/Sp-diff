@@ -1,0 +1,750 @@
+/* Deploy Kit. Uses the colour variables from styles.css. */
+.dk-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.dk-cols {
+  display: grid;
+  grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-height: 100%;
+}
+.dk-side,
+.dk-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.dk-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dk-cap {
+  font-size: 12px;
+  color: var(--muted);
+}
+.dk-paste .code-area textarea {
+  height: 170px;
+  flex: none;
+  resize: vertical;
+}
+.dk-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0;
+}
+.dk-opts legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.dk-row input[type='text'],
+.dk-row input[type='number'],
+.dk-row select {
+  flex: 1;
+  min-width: 120px;
+}
+.dk-row input[type='number'] {
+  max-width: 90px;
+  flex: 0 0 auto;
+}
+.dk-chk {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dk-out {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+}
+.dk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dk-bar h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.dk-name {
+  width: 150px;
+}
+.dk-out .dk-script {
+  flex: 1;
+  min-height: 160px;
+}
+.dk-out .dk-notes {
+  max-height: 30%;
+  overflow: auto;
+  flex: none;
+}
+.dk-err {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--del-bg);
+  border: 1px solid var(--del-strong);
+  font-size: 13px;
+}
+.dk-notes,
+.dk-find {
+  margin: 0;
+  padding: 8px 10px 8px 28px;
+  font-size: 13px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.dk-find {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-color: transparent;
+}
+.dk-find li.info {
+  opacity: 0.85;
+}
+.dk-cols-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.dk-cols-table th,
+.dk-cols-table td {
+  padding: 3px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.dk-cols-table td:nth-child(2),
+.dk-cols-table td:nth-child(3),
+.dk-cols-table th:nth-child(2),
+.dk-cols-table th:nth-child(3) {
+  text-align: center;
+  width: 44px;
+}
+.dk-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dk-items li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dk-items li input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+.dk-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+}
+
+
+/* ---------- resizable panels ---------- */
+.panes {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  height: 100%;
+}
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+  min-height: 34px;
+  flex-wrap: wrap;
+}
+.pane-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+.pane.fill .pane-body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.pane-min {
+  opacity: 0.6;
+}
+.pane-min:hover {
+  opacity: 1;
+}
+.pane-handle {
+  cursor: col-resize;
+  border-radius: 3px;
+  margin: 0 1px;
+  touch-action: none;
+}
+.pane-handle:hover,
+.pane-handle.dragging {
+  background: var(--accent);
+  opacity: 0.5;
+}
+body.resizing-cols {
+  cursor: col-resize;
+  user-select: none;
+}
+.pane.collapsed {
+  align-items: stretch;
+}
+.pane-expand {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel2);
+  writing-mode: vertical-rl;
+  padding: 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+/* ---------- data scripts ---------- */
+.dk-data {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dk-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.dk-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.dk-toolbar input[type='number'] {
+  width: 64px;
+}
+.dk-table {
+  width: 200px;
+}
+.dk-stat {
+  font-size: 12px;
+  color: var(--muted);
+}
+.dk-more {
+  position: relative;
+}
+.dk-more summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  user-select: none;
+}
+.dk-more summary::after {
+  content: ' ▾';
+}
+.dk-more[open] summary {
+  background: var(--panel2);
+}
+.dk-more-box {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+.dk-more-box hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+  width: 100%;
+}
+.dk-tabs {
+  display: flex;
+  gap: 2px;
+}
+.dk-tabs button {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.dk-tabs button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.dk-tabs .count {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: rgba(127, 127, 127, 0.2);
+}
+.dk-input {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dk-input .code-area {
+  flex: 1;
+}
+.dk-cap {
+  margin: 0;
+}
+.dk-filter {
+  width: 140px;
+}
+.dk-empty {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 8px 4px;
+  line-height: 1.5;
+}
+.dk-edited {
+  font-size: 12px;
+  color: var(--medium);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
+}
+
+/* columns grid */
+.pane-body > .dk-cols-table {
+  border: 0;
+  border-radius: 0;
+}
+.dk-cols-table thead th {
+  position: sticky;
+  top: -8px;
+  z-index: 1;
+  background: var(--panel2);
+  font-weight: 600;
+  font-size: 12px;
+}
+.dk-cols-table td {
+  vertical-align: middle;
+}
+.dk-cols-table tr.skipped td {
+  opacity: 0.45;
+}
+.dk-cols-table tr.has-rule td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.dk-cols-table tr.extra td {
+  background: color-mix(in srgb, var(--add-strong) 30%, transparent);
+}
+.dk-colname {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 120px;
+}
+.dk-colname input {
+  flex: 1;
+  min-width: 90px;
+}
+.dk-sample {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dk-value {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.dk-value select:first-child {
+  max-width: 190px;
+}
+.dk-value input {
+  flex: 1;
+  min-width: 140px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* ---------- text box with find / replace ---------- */
+.code-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+.code-area-box {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--editor);
+  border-radius: 6px;
+}
+.code-area textarea {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 4;
+  background: var(--editor);
+  color: var(--code-text);
+  position: relative;
+  resize: none;
+}
+.code-area.finding textarea {
+  background: transparent;
+}
+.fr-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+  margin: 0;
+}
+.fr-mirror mark {
+  color: transparent;
+  background: #ffe58f;
+  border-radius: 2px;
+}
+.fr-mirror mark.cur {
+  background: #ff9e3d;
+  box-shadow: 0 0 0 1px #c2410c;
+}
+.fr-open {
+  position: absolute;
+  top: 5px;
+  right: 18px;
+  z-index: 2;
+  opacity: 0.35;
+  font-size: 12px;
+}
+.code-area-box:hover .fr-open,
+.fr-open:focus-visible {
+  opacity: 0.9;
+}
+.fr-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.fr-twist {
+  padding: 1px 5px;
+  align-self: stretch;
+}
+.fr-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.fr-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.fr-row input[type='text'] {
+  flex: 1;
+  min-width: 140px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.fr-row input.fr-miss {
+  outline: 1px solid var(--high);
+}
+.fr-opt {
+  padding: 1px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.fr-opt.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.fr-count {
+  min-width: 64px;
+  text-align: center;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* narrow screens: panels stack */
+@media (max-width: 1000px) {
+  .dk-body {
+    overflow: auto;
+  }
+  .panes {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-auto-rows: minmax(340px, auto);
+    gap: 8px;
+    height: auto;
+  }
+  .pane-handle {
+    display: none;
+  }
+}
+
+/* compact columns grid so Key / Skip / Type / Value fit side by side */
+.dk-cols-table {
+  table-layout: auto;
+  min-width: 560px;
+}
+.dk-cols-table th:nth-child(4),
+.dk-cols-table td:nth-child(4) {
+  width: 1%;
+}
+.dk-cols-table td:nth-child(4) select {
+  width: 96px;
+}
+.dk-cols-table td:nth-child(5) {
+  width: 55%;
+}
+.dk-value {
+  flex-wrap: nowrap;
+}
+.dk-value select:first-child {
+  width: 150px;
+  flex: none;
+}
+.dk-value select + select,
+.dk-value input + select {
+  width: 104px;
+  flex: none;
+}
+.dk-value input {
+  min-width: 90px;
+}
+.dk-colname {
+  min-width: 0;
+}
+.dk-colname > span:first-child {
+  white-space: nowrap;
+}
+.dk-value {
+  flex-wrap: wrap;
+}
+.dk-value input {
+  flex: 1 0 100%;
+  order: 3;
+}
+.dk-value select:first-child {
+  width: 160px;
+}
+.pane-head {
+  flex-wrap: nowrap;
+}
+.pane-head > .dk-tabs {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pane-head h3 {
+  flex: none;
+}
+.dk-out .dk-name {
+  width: 120px;
+}
+.dk-cols-table td:nth-child(5) {
+  min-width: 190px;
+}
+.dk-value select:first-child {
+  flex: 1 1 130px;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+.dk-value select + select {
+  flex: 0 1 110px;
+}
+.dk-sample {
+  max-width: 80px;
+}
+.dk-colname {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.dk-colname > span:first-child {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.dk-sample {
+  max-width: 100%;
+}
+
+/* Wrapper inside a full-height panel (Release pack: findings + script) must stretch too,
+   otherwise the script box falls back to its minimum height. */
+.pane.fill .pane-body > .dk-stack {
+  flex: 1;
+  min-height: 0;
+}
+.pane.fill .pane-body > .dk-stack > .dk-out {
+  flex: 1;
+  min-height: 0;
+}
+.pane.fill .dk-find {
+  flex: none;
+  max-height: 30%;
+  overflow: auto;
+}
+
+/* ---------- coloured SQL in editable boxes ----------
+   The textarea stays on top for typing, selection, undo and find; its text is made
+   transparent and the same text is drawn underneath in the Compare colours. */
+.ca-hl {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: transparent;
+  color: var(--code-text, #172033);
+  -webkit-text-fill-color: currentColor;
+}
+.ca-hl [class^='sql-'],
+.ca-hl [class*=' sql-'] {
+  -webkit-text-fill-color: currentColor;
+}
+.code-area.coloured textarea {
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--code-text, #172033);
+}
+.code-area.coloured textarea::selection {
+  background: rgba(56, 139, 253, 0.28);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+.code-area.coloured textarea::placeholder {
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+}
+/* find matches sit under the coloured text */
+.code-area.coloured .fr-mirror {
+  z-index: 0;
+}
+.code-area.coloured .ca-hl {
+  z-index: 0;
+}
+
+/* Compare input boxes (Source / Target) use the coloured editor too */
+.editor .code-area {
+  flex: 1;
+  min-height: 0;
+}
+.editor .code-area textarea {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px;
+  overflow: auto;
+}
+.ca-hl-inner {
+  /* will-change: transform; */
+  width: max-content;
+  min-width: 100%;
+}
+
+

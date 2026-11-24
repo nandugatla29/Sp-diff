@@ -905,6 +905,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import DeployKit from './components/DeployKit';
 import RepoHub from './components/RepoHub';
+import CodeArea from './components/FindReplace';
 import AssistPanel from './components/AssistPanel';
 import DiffView from './components/DiffView';
 import SqlHighlight from './components/Sqlhighlight';
@@ -1034,11 +1035,11 @@ function Editor({ title, hint, name, text, onName, onText }: EditorProps) {
           onChange={(e) => onName(e.target.value)}
         />
       </header>
-      <textarea
-        spellCheck={false}
+      <CodeArea
         value={text}
         placeholder="Paste the stored procedure from SSMS, or load a .sql file"
-        onChange={(e) => onText(e.target.value)}
+        onChange={onText}
+        ariaLabel={`${title} SQL`}
       />
       <footer>
         <label className="file-btn">

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { sqlPieces } from './Sqlhighlight';
+import type { SqlPiece } from './Sqlhighlight';
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 
 /* =====================================================================================
@@ -74,6 +76,34 @@ const MIRROR_PROPS = [
   'boxSizing',
 ] as const;
 
+/** Above this size the box stays plain text (colouring very large pastes would slow typing). */
+const HIGHLIGHT_MAX = 400_000;
+
+/** SQL coloured exactly like Compare, split into lines so only edited lines re-render. */
+function toLines(text: string): SqlPiece[][] {
+  const lines: SqlPiece[][] = [[]];
+  for (const p of sqlPieces(text)) {
+    const parts = p.text.split('\n');
+    parts.forEach((t, i) => {
+      if (i > 0) lines.push([]);
+      if (t) lines[lines.length - 1].push(p.cls ? { text: t, cls: p.cls } : { text: t });
+    });
+  }
+  return lines;
+}
+
+const sameLine = (a: { parts: SqlPiece[] }, b: { parts: SqlPiece[] }) =>
+  a.parts.length === b.parts.length && a.parts.every((p, i) => p.text === b.parts[i].text && p.cls === b.parts[i].cls);
+
+const HlLine = memo(function HlLine({ parts }: { parts: SqlPiece[] }) {
+  return (
+    <>
+      {parts.map((p, i) => (p.cls ? <span key={i} className={p.cls}>{p.text}</span> : p.text))}
+      {'\n'}
+    </>
+  );
+}, sameLine);
+
 export interface CodeAreaProps {
   value: string;
   onChange?: (v: string) => void;
@@ -83,11 +113,42 @@ export interface CodeAreaProps {
   wrap?: 'off' | 'soft';
   ariaLabel?: string;
   onFocus?: () => void;
+  /** Colour the SQL like the Compare screen (default on). Turn off for pasted data grids. */
+  highlight?: boolean;
 }
 
-export default function CodeArea({ value, onChange, readOnly, placeholder, className = '', wrap = 'off', ariaLabel, onFocus }: CodeAreaProps) {
+export default function CodeArea({ value, onChange, readOnly, placeholder, className = '', wrap = 'off', ariaLabel, onFocus, highlight = true }: CodeAreaProps) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
+  const hlRef = useRef<HTMLPreElement>(null);
+  const hlInner = useRef<HTMLDivElement>(null);
+  const colour = highlight && wrap === 'off' && value.length > 0 && value.length <= HIGHLIGHT_MAX;
+  const lines = useMemo(() => (colour ? toLines(value) : null), [colour, value]);
+  // Only the lines on screen (plus a buffer) are coloured; the layer moves with the scroll.
+  const lineH = useRef(19.5);
+  const winRef = useRef({ from: 0, to: 120 });
+  const [win, setWin] = useState(winRef.current);
+  /** Moves the coloured layer, snapped to real screen pixels (half pixels make text blurry). */
+  const moveLayer = (inner: HTMLDivElement, x: number, y: number) => {
+    const dpr = window.devicePixelRatio || 1;
+    const snap = (v: number) => Math.round(v * dpr) / dpr;
+    inner.style.transform = `translate(${snap(x)}px, ${snap(y)}px)`;
+  };
+  const placeLayer = useCallback(() => {
+    const ta = taRef.current;
+    const inner = hlInner.current;
+    if (!ta || !inner) return;
+    const lh = lineH.current;
+    const first = Math.floor(ta.scrollTop / lh);
+    const visible = Math.ceil(ta.clientHeight / lh) + 1;
+    const w = winRef.current;
+    if (first < w.from || first + visible > w.to) {
+      winRef.current = { from: Math.max(0, first - 60), to: first + visible + 60 };
+      setWin(winRef.current); // the layout effect below moves the layer once the new lines exist
+      return;
+    }
+    moveLayer(inner, -ta.scrollLeft, w.from * lh - ta.scrollTop);
+  }, []);
   const findRef = useRef<HTMLInputElement>(null);
   const repRef = useRef<HTMLInputElement>(null);
 
@@ -111,21 +172,38 @@ export default function CodeArea({ value, onChange, readOnly, placeholder, class
 
   // The highlight layer must use exactly the same box and font as the textarea.
   useLayoutEffect(() => {
-    if (!open || !taRef.current) return;
+    if ((!open && !colour) || !taRef.current) return;
     const cs = window.getComputedStyle(taRef.current);
     const st: Record<string, string> = {};
     for (const p of MIRROR_PROPS) st[p] = cs[p];
+    lineH.current = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
     setMirrorStyle({ ...(st as CSSProperties), borderStyle: 'solid', borderColor: 'transparent' });
-  }, [open, wrap, className]);
+  }, [open, colour, wrap, className]);
 
   const syncScroll = useCallback(() => {
     const ta = taRef.current;
+    if (!ta) return;
     const m = mirrorRef.current;
-    if (!ta || !m) return;
-    m.scrollTop = ta.scrollTop;
-    m.scrollLeft = ta.scrollLeft;
-  }, []);
-  useEffect(syncScroll, [syncScroll, matches, cur, value]);
+    if (m) {
+      m.scrollTop = ta.scrollTop;
+      m.scrollLeft = ta.scrollLeft;
+    }
+    placeLayer();
+  }, [placeLayer]);
+  useLayoutEffect(syncScroll, [syncScroll, matches, cur, value, lines, mirrorStyle]);
+  useLayoutEffect(() => {
+    const ta = taRef.current;
+    const inner = hlInner.current;
+    if (ta && inner) moveLayer(inner, -ta.scrollLeft, win.from * lineH.current - ta.scrollTop);
+  }, [win, lines]);
+  // a resized box shows more lines
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta || !colour || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => placeLayer());
+    ro.observe(ta);
+    return () => ro.disconnect();
+  }, [colour, placeLayer]);
 
   /** Scrolls the textarea so the match is in view (without stealing focus from the find box). */
   const reveal = useCallback(
@@ -306,7 +384,7 @@ export default function CodeArea({ value, onChange, readOnly, placeholder, class
   const count = error ? 'Bad pattern' : !q ? '' : matches.length ? `${cur < 0 ? '?' : cur + 1} of ${matches.length >= MAX_MATCHES ? `${MAX_MATCHES}+` : matches.length}` : 'No results';
 
   return (
-    <div className={`code-area ${className}${open && matches.length ? ' finding' : ''}`} onKeyDown={onAreaKey}>
+    <div className={`code-area ${className}${open && matches.length ? ' finding' : ''}${lines ? ' coloured' : ''}`} onKeyDown={onAreaKey}>
       {open && (
         <div className="fr-bar" role="search">
           {canReplace && (
@@ -376,6 +454,15 @@ export default function CodeArea({ value, onChange, readOnly, placeholder, class
           <div ref={mirrorRef} className="fr-mirror" style={mirrorStyle} aria-hidden="true">
             {highlighted}
           </div>
+        )}
+        {lines && (
+          <pre ref={hlRef} className="ca-hl" style={mirrorStyle} aria-hidden="true">
+            <div ref={hlInner} className="ca-hl-inner">
+              {lines.slice(win.from, win.to).map((parts, i) => (
+                <HlLine key={win.from + i} parts={parts} />
+              ))}
+            </div>
+          </pre>
         )}
         <textarea
           ref={taRef}

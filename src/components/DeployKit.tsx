@@ -399,7 +399,7 @@ export default function DeployKit({ onBack }: { onBack: () => void }) {
                       {inTab === 'rows' && (
                         <>
                           <p className="dk-cap">Select the rows in SSMS, right-click → Copy with Headers, paste here.</p>
-                          <CodeArea value={gridIn} onChange={setGridIn} placeholder={'Id\tName\tIsActive\n1\tAlpha\t1'} ariaLabel="UAT rows" />
+                          <CodeArea highlight={false} value={gridIn} onChange={setGridIn} placeholder={'Id\tName\tIsActive\n1\tAlpha\t1'} ariaLabel="UAT rows" />
                         </>
                       )}
                       {inTab === 'schema' && (
@@ -411,7 +411,7 @@ export default function DeployKit({ onBack }: { onBack: () => void }) {
                       {inTab === 'prod' && (
                         <>
                           <p className="dk-cap">Optional. The same rows copied from Production: then only new and changed rows are scripted.</p>
-                          <CodeArea value={prodRows} onChange={setProdRows} placeholder="Leave empty to script every row" ariaLabel="Production rows" />
+                          <CodeArea highlight={false} value={prodRows} onChange={setProdRows} placeholder="Leave empty to script every row" ariaLabel="Production rows" />
                         </>
                       )}
                     </div>

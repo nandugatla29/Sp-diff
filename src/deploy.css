@@ -689,3 +689,100 @@ button.link {
   max-height: 30%;
   overflow: auto;
 }
+
+/* ---------- coloured SQL in editable boxes ----------
+   The textarea stays on top for typing, selection, undo and find; its text is made
+   transparent and the same text is drawn underneath in the Compare colours. */
+.ca-hl {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: transparent;
+  color: var(--code-text, #172033);
+  -webkit-text-fill-color: currentColor;
+}
+.ca-hl [class^='sql-'],
+.ca-hl [class*=' sql-'] {
+  -webkit-text-fill-color: currentColor;
+}
+.code-area.coloured textarea {
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--code-text, #172033);
+}
+.code-area.coloured textarea::selection {
+  background: rgba(56, 139, 253, 0.28);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+.code-area.coloured textarea::placeholder {
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+}
+/* find matches sit under the coloured text */
+.code-area.coloured .fr-mirror {
+  z-index: 0;
+}
+.code-area.coloured .ca-hl {
+  z-index: 0;
+}
+
+/* Compare input boxes (Source / Target) use the coloured editor too */
+.editor .code-area {
+  flex: 1;
+  min-height: 0;
+}
+.editor .code-area textarea {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px;
+  overflow: auto;
+}
+.ca-hl-inner {
+  width: max-content;
+  min-width: 100%;
+}
+
+/* ---------- sharp code boxes, coloured exactly like Compare ----------
+   Whole-pixel line height (20px) so no line is drawn between screen pixels (that looked
+   blurry). Token colours are the same as the Compare view (.diff-body … .sql-*). */
+.code-area textarea,
+.ca-hl,
+.fr-mirror,
+.editor .code-area textarea {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 20px;
+  letter-spacing: 0;
+  font-variant-ligatures: none;
+}
+.code-area-box,
+.code-area textarea,
+.editor .code-area textarea {
+  background-color: var(--editor, #ffffff);
+}
+.code-area.coloured textarea,
+.editor .code-area.coloured textarea {
+  background-color: transparent;
+  caret-color: var(--code-text, #172033);
+}
+.ca-hl {
+  color: var(--code-text, #172033);
+}
+.ca-hl .sql-keyword { color: #0756b9 !important; font-weight: 600 !important; }
+.ca-hl .sql-string { color: #16803c !important; font-weight: 400 !important; }
+.ca-hl .sql-comment { color: #718096 !important; font-style: italic; font-weight: 400 !important; }
+.ca-hl .sql-number { color: #a8550a !important; }
+.ca-hl .sql-function { color: #7c3aed !important; font-weight: 400 !important; }
+.ca-hl .sql-identifier { color: #0f766e !important; }
+.ca-hl .sql-variable { color: #b45309 !important; font-weight: 400 !important; }
+.ca-hl .sql-system-variable { color: #9333ea !important; font-weight: 400 !important; }
+.ca-hl .sql-operator { color: #374151 !important; font-weight: 400 !important; }
+.ca-hl .sql-var-only { color: #075985 !important; }
+.ca-hl .sql-var-bad { color: #991b1b !important; }
+.code-area.coloured textarea::selection {
+  background: rgba(56, 139, 253, 0.25);
+}

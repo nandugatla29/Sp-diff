@@ -110,17 +110,25 @@ interface Props {
   marks?: VarMarks;
 }
 
-export default function SqlHighlight({ text, marks }: Props) {
-  const nodes: ReactNode[] = [];
+export interface SqlPiece {
+  text: string;
+  cls?: string;
+  title?: string;
+}
+
+/** Splits SQL into coloured pieces (plain text between tokens has no class). Shared by the
+ *  read-only code views and the editable text boxes. */
+export function sqlPieces(text: string, marks?: VarMarks): SqlPiece[] {
+  const out: SqlPiece[] = [];
   let last = 0;
   let match: RegExpExecArray | null;
-  // A fresh regex per render avoids shared lastIndex state during concurrent renders.
   const tokenRe = new RegExp(TOKEN_PATTERN.source, 'g');
+  const fnRe = /\s*\(/y;
 
   while ((match = tokenRe.exec(text)) !== null) {
     const token = match[0];
     const start = match.index;
-    if (start > last) nodes.push(text.slice(last, start));
+    if (start > last) out.push({ text: text.slice(last, start) });
 
     let cls = '';
     let title: string | undefined;
@@ -150,17 +158,32 @@ export default function SqlHighlight({ text, marks }: Props) {
     } else if (KEYWORDS.has(upper)) {
       cls = 'sql-keyword';
     } else if (/^[A-Za-z_][\w$#@]*$/.test(token)) {
-      // SQL functions are usually immediately followed by an opening parenthesis.
-      if (/^\s*\(/.test(text.slice(tokenRe.lastIndex))) cls = 'sql-function';
+      // a name followed by "(" is a function; checked in place (no copy of the rest of the text)
+      fnRe.lastIndex = tokenRe.lastIndex;
+      if (fnRe.test(text)) cls = 'sql-function';
     } else if (/^(?:<>|!=|<=|>=|!<|!>|::|:=|[-+*/%=<>~^&|]+)$/.test(token)) {
       cls = 'sql-operator';
     }
 
-    nodes.push(cls
-      ? <span key={`${start}-${token}`} className={cls} title={title}>{token}</span>
-      : token);
+    out.push(cls ? { text: token, cls, title } : { text: token });
     last = start + token.length;
   }
-  if (last < text.length) nodes.push(text.slice(last));
+  if (last < text.length) out.push({ text: text.slice(last) });
+  return out;
+}
+
+export default function SqlHighlight({ text, marks }: Props) {
+  let pos = 0;
+  const nodes: ReactNode[] = sqlPieces(text, marks).map((p) => {
+    const start = pos;
+    pos += p.text.length;
+    return p.cls ? (
+      <span key={`${start}-${p.text}`} className={p.cls} title={p.title}>
+        {p.text}
+      </span>
+    ) : (
+      p.text
+    );
+  });
   return <>{nodes}</>;
 }
