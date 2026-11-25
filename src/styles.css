@@ -1623,3 +1623,17 @@ fieldset.ignore label,
 .diff-body .row .code .sql-var-bad {
   color: #991b1b !important;
 }
+/* Compare screen opened from SP Repo */
+.repo-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  font-size: 13px;
+  background: #ddf4ff;
+  color: #0a3069;
+  border-bottom: 1px solid #b6e3ff;
+}
+.repo-link span {
+  flex: 1;
+}

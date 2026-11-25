@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { diffArrays } from 'diff';
 import { sqlPieces } from './Sqlhighlight';
 import type { SqlPiece } from './Sqlhighlight';
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
@@ -95,14 +96,69 @@ function toLines(text: string): SqlPiece[][] {
 const sameLine = (a: { parts: SqlPiece[] }, b: { parts: SqlPiece[] }) =>
   a.parts.length === b.parts.length && a.parts.every((p, i) => p.text === b.parts[i].text && p.cls === b.parts[i].cls);
 
-const HlLine = memo(function HlLine({ parts }: { parts: SqlPiece[] }) {
-  return (
-    <>
-      {parts.map((p, i) => (p.cls ? <span key={i} className={p.cls}>{p.text}</span> : p.text))}
-      {'\n'}
-    </>
-  );
-}, sameLine);
+type LineMark = 'add' | 'mod';
+
+const HlLine = memo(
+  function HlLine({ parts, mark }: { parts: SqlPiece[]; mark?: LineMark }) {
+    return (
+      <div className={mark ? `ca-line ${mark}` : 'ca-line'}>
+        {parts.length ? parts.map((p, i) => (p.cls ? <span key={i} className={p.cls}>{p.text}</span> : p.text)) : '\u200b'}
+      </div>
+    );
+  },
+  (a, b) => a.mark === b.mark && sameLine(a, b),
+);
+
+/* ---------- what changed compared with a baseline (e.g. the last commit) ---------- */
+
+interface LineChanges {
+  marks: (LineMark | undefined)[];
+  /** Lines deleted just before line index k (k = number of lines: at the very end). */
+  removed: Map<number, string[]>;
+  added: number;
+  changed: number;
+  deleted: number;
+}
+
+const MAX_CHANGE_LINES = 20000;
+
+function lineChanges(base: string, text: string): LineChanges {
+  const a = base.replace(/\r\n?/g, '\n').split('\n');
+  const b = text.split('\n');
+  const out: LineChanges = { marks: new Array(b.length), removed: new Map(), added: 0, changed: 0, deleted: 0 };
+  if (a.length > MAX_CHANGE_LINES || b.length > MAX_CHANGE_LINES) return out;
+  // trailing spaces are not a change worth marking
+  const parts = diffArrays(a, b, { comparator: (x: string, y: string) => x.trimEnd() === y.trimEnd() } as never);
+  let i = 0;
+  for (let k = 0; k < parts.length; k++) {
+    const p = parts[k];
+    const n = p.count ?? p.value.length;
+    if (p.removed) {
+      const next = parts[k + 1];
+      if (next?.added) {
+        const add = next.count ?? next.value.length;
+        const paired = Math.min(n, add);
+        for (let j = 0; j < add; j++) out.marks[i + j] = j < paired ? 'mod' : 'add';
+        out.changed += paired;
+        out.added += add - paired;
+        if (n > paired) {
+          out.removed.set(i + paired, p.value.slice(paired));
+          out.deleted += n - paired;
+        }
+        i += add;
+        k++;
+      } else {
+        out.removed.set(i, p.value);
+        out.deleted += n;
+      }
+    } else if (p.added) {
+      for (let j = 0; j < n; j++) out.marks[i + j] = 'add';
+      out.added += n;
+      i += n;
+    } else i += n;
+  }
+  return out;
+}
 
 export interface CodeAreaProps {
   value: string;
@@ -115,15 +171,47 @@ export interface CodeAreaProps {
   onFocus?: () => void;
   /** Colour the SQL like the Compare screen (default on). Turn off for pasted data grids. */
   highlight?: boolean;
+  /** Show line numbers (default: on when the SQL is coloured). */
+  lineNumbers?: boolean;
+  /** Mark lines added / changed / deleted compared with this text (e.g. the last commit). */
+  baseline?: string | null;
+  /** Words after the change summary, e.g. "vs. last commit". */
+  baselineLabel?: string;
+  /** Called while scrolling with the first visible line (1-based). */
+  onTopLine?: (line: number) => void;
+  /** Scroll so this line (1-based) is at the top when the box opens. */
+  startLine?: number;
 }
 
-export default function CodeArea({ value, onChange, readOnly, placeholder, className = '', wrap = 'off', ariaLabel, onFocus, highlight = true }: CodeAreaProps) {
+export default function CodeArea({
+  value,
+  onChange,
+  readOnly,
+  placeholder,
+  className = '',
+  wrap = 'off',
+  ariaLabel,
+  onFocus,
+  highlight = true,
+  lineNumbers,
+  baseline,
+  baselineLabel = 'compared with the original',
+  onTopLine,
+  startLine,
+}: CodeAreaProps) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const hlRef = useRef<HTMLPreElement>(null);
   const hlInner = useRef<HTMLDivElement>(null);
+  const gutInner = useRef<HTMLDivElement>(null);
   const colour = highlight && wrap === 'off' && value.length > 0 && value.length <= HIGHLIGHT_MAX;
   const lines = useMemo(() => (colour ? toLines(value) : null), [colour, value]);
+  const showNums = (lineNumbers ?? highlight) && !!lines;
+  // Change marks follow a moment behind typing so they never slow the keys down.
+  const lazyValue = useDeferredValue(value);
+  const changes = useMemo(() => (colour && baseline !== undefined && baseline !== null ? lineChanges(baseline, lazyValue) : null), [colour, baseline, lazyValue]);
+  const onTopRef = useRef(onTopLine);
+  onTopRef.current = onTopLine;
   // Only the lines on screen (plus a buffer) are coloured; the layer moves with the scroll.
   const lineH = useRef(19.5);
   const winRef = useRef({ from: 0, to: 120 });
@@ -148,6 +236,8 @@ export default function CodeArea({ value, onChange, readOnly, placeholder, class
       return;
     }
     moveLayer(inner, -ta.scrollLeft, w.from * lh - ta.scrollTop);
+    if (gutInner.current) moveLayer(gutInner.current, 0, w.from * lh - ta.scrollTop);
+    onTopRef.current?.(first + 1);
   }, []);
   const findRef = useRef<HTMLInputElement>(null);
   const repRef = useRef<HTMLInputElement>(null);
@@ -195,7 +285,21 @@ export default function CodeArea({ value, onChange, readOnly, placeholder, class
     const ta = taRef.current;
     const inner = hlInner.current;
     if (ta && inner) moveLayer(inner, -ta.scrollLeft, win.from * lineH.current - ta.scrollTop);
-  }, [win, lines]);
+    if (ta && gutInner.current) moveLayer(gutInner.current, 0, win.from * lineH.current - ta.scrollTop);
+  }, [win, lines, showNums]);
+
+  // Open at a given line (e.g. where you were in the other view).
+  const started = useRef(false);
+  useLayoutEffect(() => {
+    const ta = taRef.current;
+    if (started.current || !ta || !value) return;
+    started.current = true;
+    if (startLine && startLine > 1) {
+      const cs = window.getComputedStyle(ta);
+      const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5;
+      ta.scrollTop = (startLine - 1) * lh;
+    }
+  }, [value, startLine]);
   // a resized box shows more lines
   useEffect(() => {
     const ta = taRef.current;
@@ -449,7 +553,38 @@ export default function CodeArea({ value, onChange, readOnly, placeholder, class
           </div>
         </div>
       )}
-      <div className="code-area-box">
+      <div className={`code-area-box${showNums ? ' with-gutter' : ''}`}>
+        {showNums && lines && (
+          <div className="ca-gutter" aria-hidden="true" style={{ width: `calc(${String(lines.length).length}ch + 20px)` }}>
+            <div ref={gutInner} className="ca-gutter-inner" style={{ paddingTop: `calc(${mirrorStyle.paddingTop ?? '0px'} + ${mirrorStyle.borderTopWidth ?? '0px'})` }}>
+              {Array.from({ length: Math.max(0, Math.min(win.to, lines.length) - win.from) }, (_, k) => {
+                const i = win.from + k;
+                const mark = changes?.marks[i];
+                const delAbove = changes?.removed.get(i);
+                const delEnd = i === lines.length - 1 ? changes?.removed.get(lines.length) : undefined;
+                const gone = delAbove ?? delEnd;
+                return (
+                  <div
+                    key={i}
+                    className={`ca-num${mark ? ` ${mark}` : ''}${delAbove ? ' del-above' : ''}${delEnd ? ' del-below' : ''}`}
+                    title={
+                      gone
+                        ? `${gone.length} line(s) deleted here:\n${gone.slice(0, 12).join('\n')}${gone.length > 12 ? '\n…' : ''}`
+                        : mark === 'add'
+                          ? 'New line'
+                          : mark === 'mod'
+                            ? 'Changed line'
+                            : undefined
+                    }
+                  >
+                    {i + 1}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <div className="ca-main">
         {highlighted && (
           <div ref={mirrorRef} className="fr-mirror" style={mirrorStyle} aria-hidden="true">
             {highlighted}
@@ -459,7 +594,7 @@ export default function CodeArea({ value, onChange, readOnly, placeholder, class
           <pre ref={hlRef} className="ca-hl" style={mirrorStyle} aria-hidden="true">
             <div ref={hlInner} className="ca-hl-inner">
               {lines.slice(win.from, win.to).map((parts, i) => (
-                <HlLine key={win.from + i} parts={parts} />
+                <HlLine key={win.from + i} parts={parts} mark={changes?.marks[win.from + i]} />
               ))}
             </div>
           </pre>
@@ -481,7 +616,16 @@ export default function CodeArea({ value, onChange, readOnly, placeholder, class
             🔍
           </button>
         )}
+        </div>
       </div>
+      {changes && (changes.added || changes.changed || changes.deleted) ? (
+        <div className="ca-summary" aria-live="polite">
+          {changes.added > 0 && <span className="add">+{changes.added} new</span>}
+          {changes.changed > 0 && <span className="mod">~{changes.changed} changed</span>}
+          {changes.deleted > 0 && <span className="del">−{changes.deleted} deleted</span>}
+          <span className="muted">lines {baselineLabel}</span>
+        </div>
+      ) : null}
     </div>
   );
 }

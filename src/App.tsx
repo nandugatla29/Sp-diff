@@ -906,6 +906,8 @@ import type { ChangeEvent } from 'react';
 import DeployKit from './components/DeployKit';
 import RepoHub from './components/RepoHub';
 import CodeArea from './components/FindReplace';
+import { Repo } from './lib/repo/git';
+import { IdbStore } from './lib/repo/stores';
 import AssistPanel from './components/AssistPanel';
 import DiffView from './components/DiffView';
 import SqlHighlight from './components/Sqlhighlight';
@@ -1183,7 +1185,11 @@ export default function App() {
     setRight(last.right);
   };
 
+  // A procedure opened from SP Repo: which side is its working copy (edits there are saved back).
+  const [repoLink, setRepoLink] = usePersistentState<{ name: string; side: Side } | null>('repoLink', null);
+
   const swap = () => {
+    setRepoLink((l) => (l ? { ...l, side: l.side === 'left' ? 'right' : 'left' } : l));
     setLeft(right);
     setRight(left);
     setLeftName(rightName);
@@ -1426,6 +1432,7 @@ export default function App() {
     if (!path) return;
     setFolders(f);
     setOpenPath(path);
+    setRepoLink(null); // a folder file replaces the SP Repo procedure
     setLeft(lf?.text ?? '');
     setRight(rf?.text ?? '');
     setLeftName(f.left.name);
@@ -1537,13 +1544,25 @@ export default function App() {
 
   const [deployOpen, setDeployOpen] = useState(false);
   const [repoOpen, setRepoOpen] = usePersistentState<boolean>('repoOpen', false);
+  // Save the linked side back into the SP Repo working copy (any edit: typing, taking changes, undo).
+  useEffect(() => {
+    if (!repoLink) return;
+    const text = repoLink.side === 'left' ? left : right;
+    const t = window.setTimeout(() => {
+      new Repo(new IdbStore('default'), null, '').saveWork(repoLink.name, text).catch(() => undefined);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [repoLink, left, right]);
+
   if (deployOpen) return <DeployKit onBack={() => setDeployOpen(false)} />;
   if (repoOpen)
     return (
       <RepoHub
         onBack={() => setRepoOpen(false)}
-        onOpenInCompare={(l, r, ln, rn) => {
+        onOpenInCompare={(l, r, ln, rn, spName) => {
           // Two versions from SP Repo go straight into the normal compare screen.
+          // The right side is the working copy: what you change there is saved back to SP Repo.
+          setRepoLink({ name: spName, side: 'right' });
           setOpenPath(null);
           setLeft(l);
           setRight(r);
@@ -1614,6 +1633,28 @@ export default function App() {
           </button>
         )}
       </header>
+      {repoLink && (
+        <div className="repo-link">
+          <span>
+            🔗 <strong>{repoLink.name}</strong> from SP Repo. Your changes to the <strong>{repoLink.side === 'right' ? 'Target (right)' : 'Source (left)'}</strong> side are
+            saved to your SP Repo working copy automatically.
+          </span>
+          <button
+            type="button"
+            className="primary"
+            onClick={async () => {
+              // save right now (the automatic save waits a moment after the last key)
+              await new Repo(new IdbStore('default'), null, '').saveWork(repoLink.name, repoLink.side === 'left' ? left : right).catch(() => undefined);
+              setRepoOpen(true);
+            }}
+          >
+            Back to SP Repo
+          </button>
+          <button type="button" onClick={() => setRepoLink(null)} title="Stop saving changes back to SP Repo">
+            Unlink
+          </button>
+        </div>
+      )}
 
       {warning && (
         <div className="banner" role="status">

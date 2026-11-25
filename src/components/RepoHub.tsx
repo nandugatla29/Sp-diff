@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import '../deploy.css';
 import '../repo.css';
@@ -99,11 +99,32 @@ function AheadBehind({ ab, of }: { ab: { ahead: number; behind: number } | null;
 const CONTEXT = 3;
 
 /** Side-by-side diff of two versions of a procedure (same engine and colours as Compare). */
-export function DiffBlock({ a, b, aLabel, bLabel }: { a: string | null; b: string | null; aLabel: string; bLabel: string }) {
+export function DiffBlock({ a, b, aLabel, bLabel, focusLine }: { a: string | null; b: string | null; aLabel: string; bLabel: string; focusLine?: number }) {
   const rows = useMemo(() => computeRows(a ?? '', b ?? '', defaultOptions), [a, b]);
   const stats = useMemo(() => computeStats(rows), [rows]);
-  const [opened, setOpened] = useState<Set<number>>(new Set());
-  useEffect(() => setOpened(new Set()), [a, b]);
+  // Row of the line you were looking at (right side), with the lines around it unfolded.
+  const focusRow = useMemo(() => {
+    if (!focusLine || focusLine <= 1) return -1;
+    const i = rows.findIndex((r) => (r.right?.no ?? 0) >= focusLine);
+    return i;
+  }, [rows, focusLine]);
+  const around = (i: number) => {
+    const s = new Set<number>();
+    if (i >= 0) for (let k = Math.max(0, i - 2); k < Math.min(rows.length, i + 40); k++) s.add(k);
+    return s;
+  };
+  const [opened, setOpened] = useState<Set<number>>(() => around(focusRow));
+  useEffect(() => setOpened(around(focusRow)), [a, b]); // eslint-disable-line react-hooks/exhaustive-deps
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const scrolled = useRef(false);
+  useLayoutEffect(() => {
+    if (scrolled.current || focusRow < 0 || !bodyRef.current) return;
+    const el = bodyRef.current.querySelector<HTMLElement>(`[data-row="${focusRow}"]`);
+    if (el) {
+      bodyRef.current.scrollTop = el.offsetTop; // the diff body is the offset parent (position: relative)
+      scrolled.current = true;
+    }
+  });
 
   // Show changed rows with a few lines of context; fold the long unchanged stretches.
   const pieces = useMemo(() => {
@@ -149,7 +170,7 @@ export function DiffBlock({ a, b, aLabel, bLabel }: { a: string | null; b: strin
           {stats.blocks} change{stats.blocks === 1 ? '' : 's'} · layout-only differences hidden
         </span>
       </div>
-      <div className="diff-body wrap" style={{ ['--code' as string]: 'minmax(0, 1fr)' }}>
+      <div ref={bodyRef} className="diff-body wrap" style={{ ['--code' as string]: 'minmax(0, 1fr)' }}>
         {stats.blocks === 0 && <p className="rp-empty">Only spaces / line breaks differ.</p>}
         {pieces.map((p) =>
           'fold' in p ? (
@@ -168,7 +189,7 @@ export function DiffBlock({ a, b, aLabel, bLabel }: { a: string | null; b: strin
               ⋯ {p.count} unchanged line{p.count === 1 ? '' : 's'}
             </button>
           ) : (
-            <div key={p.i} className={`row ${p.row.kind}`}>
+            <div key={p.i} data-row={p.i} className={`row ${p.row.kind}`}>
               {cell(p.row, 'left')}
               {cell(p.row, 'right')}
             </div>
@@ -245,7 +266,7 @@ function ChangeSet({ repo, from, to, fromLabel, toLabel, actions }: { repo: Repo
 
 /* ================================================================== main ================ */
 
-export default function RepoHub({ onBack, onOpenInCompare }: { onBack: () => void; onOpenInCompare?: (left: string, right: string, leftName: string, rightName: string) => void }) {
+export default function RepoHub({ onBack, onOpenInCompare }: { onBack: () => void; onOpenInCompare?: (left: string, right: string, leftName: string, rightName: string, spName: string) => void }) {
   const [tab, setTab] = usePersistentState<Tab>('rp-tab', 'code');
   const [user, setUser] = useState(() => localStorage.getItem('sprepo:user') ?? '');
   const [handle, setHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -581,11 +602,13 @@ function NeedRemote({ state, onConnect, onReconnect }: { state: RemoteState; onC
 
 /* ================================================================== Code tab ============ */
 
-function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, refresh }: { repo: Repo; view: View; act: Act; busy: boolean; canPush: boolean; onOpenInCompare?: (l: string, r: string, ln: string, rn: string) => void; onHistory: () => void; refresh: () => Promise<void> }) {
+function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, refresh }: { repo: Repo; view: View; act: Act; busy: boolean; canPush: boolean; onOpenInCompare?: (l: string, r: string, ln: string, rn: string, spName: string) => void; onHistory: () => void; refresh: () => Promise<void> }) {
   const [sel, setSel] = usePersistentState<string | null>('rp-sel', null);
   const [filter, setFilter] = useState('');
   const [mode, setMode] = useState<'edit' | 'changes'>('edit');
   const [draft, setDraft] = useState<string | null>(null);
+  // Where you were in each procedure, so Edit and Changes open at the same place.
+  const topLines = useRef<Record<string, number>>({});
   const [adding, setAdding] = useState(false);
   const [msg, setMsg] = useState('');
   const [picked, setPicked] = useState<Set<string> | null>(null);
@@ -753,9 +776,19 @@ function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, r
       </button>
     </div>
   ) : mode === 'changes' ? (
-    <DiffBlock a={headText} b={text} aLabel={`${view.branch} (last commit)`} bLabel="your working copy" />
+    <DiffBlock a={headText} b={text} aLabel={`${view.branch} (last commit)`} bLabel="your working copy" focusLine={topLines.current[sel] ?? 1} />
   ) : (
-    <CodeArea value={text ?? ''} onChange={onEdit} ariaLabel={`Edit ${sel}`} className="rp-editor" />
+    <CodeArea
+      key={sel}
+      value={text ?? ''}
+      onChange={onEdit}
+      ariaLabel={`Edit ${sel}`}
+      className="rp-editor"
+      baseline={view.head?.tree[sel] ? headText : stateOf.get(sel) === 'added' ? '' : null}
+      baselineLabel={`vs. last commit on ${view.branch}`}
+      startLine={topLines.current[sel] ?? 1}
+      onTopLine={(n) => (topLines.current[sel] = n)}
+    />
   );
 
   const editorActions = sel && !adding && !conflictOf.has(sel) && stateOf.get(sel) !== 'deleted' && (
@@ -768,8 +801,15 @@ function CodeTab({ repo, view, act, busy, canPush, onOpenInCompare, onHistory, r
           Changes
         </button>
       </div>
-      {onOpenInCompare && headText !== null && (
-        <button type="button" title="Open last commit vs working copy in the full Compare screen" onClick={() => onOpenInCompare(headText, text ?? '', `${sel} @ ${view.branch}`, `${sel} (working copy)`)}>
+      {onOpenInCompare && (
+        <button
+          type="button"
+          title="Open last commit (left) vs your working copy (right) in the full Compare screen. Changes you make there are saved back here."
+          onClick={async () => {
+            await saveNow();
+            onOpenInCompare(headText ?? '', text ?? '', `${sel} @ ${view.branch}`, `${sel} (working copy)`, sel);
+          }}
+        >
           Compare
         </button>
       )}

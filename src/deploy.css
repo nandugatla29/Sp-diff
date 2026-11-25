@@ -786,3 +786,126 @@ button.link {
 .code-area.coloured textarea::selection {
   background: rgba(56, 139, 253, 0.25);
 }
+
+/* ---------- line numbers and change marks ----------
+   Gutter on the left like VS Code: green bar = new line, blue bar = changed line,
+   red triangle = lines deleted there (hover it to read them). Changed lines get a light tint. */
+.code-area-box.with-gutter {
+  flex-direction: row;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.code-area-box.with-gutter:focus-within {
+  border-color: var(--accent);
+}
+.code-area-box.with-gutter textarea {
+  border-color: transparent;
+  border-radius: 0;
+}
+.ca-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ca-gutter {
+  flex: none;
+  overflow: hidden;
+  position: relative;
+  background: #f6f8fa;
+  border-right: 1px solid var(--border);
+  user-select: none;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 20px;
+}
+.ca-gutter-inner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+.ca-num {
+  height: 20px;
+  padding: 0 10px 0 4px;
+  text-align: right;
+  color: #8c959f;
+  position: relative;
+  font-variant-numeric: tabular-nums;
+}
+.ca-num.add,
+.ca-num.mod {
+  color: #57606a;
+}
+.ca-num.add::before,
+.ca-num.mod::before {
+  content: '';
+  position: absolute;
+  right: 2px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 1px;
+}
+.ca-num.add::before {
+  background: #2da44e;
+}
+.ca-num.mod::before {
+  background: #0969da;
+}
+.ca-num.del-above::after,
+.ca-num.del-below::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-right: 7px solid #cf222e;
+  cursor: help;
+}
+.ca-num.del-above::after {
+  top: -5px;
+}
+.ca-num.del-below::after {
+  bottom: -5px;
+}
+.ca-num[title] {
+  pointer-events: auto;
+}
+.ca-gutter {
+  pointer-events: auto;
+}
+/* the coloured layer draws one block per line, so a whole line can be tinted */
+.ca-line {
+  height: 20px;
+}
+.ca-line.add {
+  background: rgba(45, 164, 78, 0.13);
+}
+.ca-line.mod {
+  background: rgba(9, 105, 218, 0.09);
+}
+.ca-summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 3px 4px 0;
+  font-size: 12px;
+}
+.ca-summary .add {
+  color: #1a7f37;
+  font-weight: 600;
+}
+.ca-summary .mod {
+  color: #0969da;
+  font-weight: 600;
+}
+.ca-summary .del {
+  color: #cf222e;
+  font-weight: 600;
+}

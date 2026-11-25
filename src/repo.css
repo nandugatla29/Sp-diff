@@ -659,3 +659,6 @@ button.danger {
     max-width: 100%;
   }
 }
+.rp-diff .diff-body {
+  position: relative;
+}
