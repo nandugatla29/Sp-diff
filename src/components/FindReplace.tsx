@@ -128,7 +128,13 @@ function lineChanges(base: string, text: string): LineChanges {
   const out: LineChanges = { marks: new Array(b.length), removed: new Map(), added: 0, changed: 0, deleted: 0 };
   if (a.length > MAX_CHANGE_LINES || b.length > MAX_CHANGE_LINES) return out;
   // trailing spaces are not a change worth marking
-  const parts = diffArrays(a, b, { comparator: (x: string, y: string) => x.trimEnd() === y.trimEnd() } as never);
+  // const parts = diffArrays(a, b, { comparator: (x: string, y: string) => x.trimEnd() === y.trimEnd() } as never);
+    const parts = (diffArrays(a, b, { comparator: (x: string, y: string) => x.trimEnd() === y.trimEnd() } as never) ?? []) as {
+    value: string[];
+    count?: number;
+    added?: boolean;
+    removed?: boolean;
+  }[];
   let i = 0;
   for (let k = 0; k < parts.length; k++) {
     const p = parts[k];
